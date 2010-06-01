@@ -1,0 +1,102 @@
+
+TODO:
+=====
+.) Remove the newly added parameter to DefineIndex(); Done.
+.) Remove the newly added member to IndexInfo{}; Done.
+.) Remove the newly added member to IndexStmt{}; Done.
+.) Order the #include lines alphabetically, in new files. Done.
+.) Analyze if we need timestamp column in pg_indexadvisor table.
+.) Analyze if we need nattrs column in pg_indexadvisor table. Done; removed.
+.) See why we shouldn't consider GROUP-BY clause in the presence on a WHERE
+    clause (scan_query_for_relevant_attributes())?
+.) Eliminate warnings from newly added sources.
+.) Write a pl/pgsql function that interprets the results in pg_indexadvisor.
+    Done.
+.) Sanitize the liked-list logic in various functions.
+      Done for remove_irrelevant_candidates().
+	  Pending: merge_candidates(), build_composite_candidates().
+.) Somehow recommend to drop indexes that are not much used (Heikki's idea).
+.) Investigate the difference in costs (in sample_psql*) across patch versions
+    15 and 17; both are based on REL8_2_STABLE!
+.) Do not try to insert advisory into advise_index if XactReadOnly (in xact.c)
+    is true; probably, raise a warning instead!
+.) Do not create a virtual index if the base relation has less than a specific
+    number of pages (eg 2) and/or less than a specific number of tuples (eg 10).
+.) Reduce the number of heap_open()s by attaching the Relation to the candidate
+    structure and heap_close() only when the candidate is being pfree()d.
+.) Create new memory context and do everything within that.
+.) Propose that _compile_assert() macro be added to the core.
+.) Mention that get_relation_info_hook and explain_get_index_name_hook are
+    registered only when required and are unregistered immediately after that.
+    This avoids overhead in normal routes.
+    
+.) Also, the 'static global' index_candidates is reset based on the above
+    assumption, else, we have to reset it at the top of planner_callback() and
+    ExplainOneQuery_callback(), otherwise the is_virtual_index() calls will
+	behave abnormally if there was and ERROR thrown for the previous command! 
+ 
+BUGS:
+=====
+.) The SELECTs in the pg_advise are returning wrong results, when the same index
+    is suggested twice, because of the SUM() aggregates. Expected behaviour. Not a bug; intended behaviour.
+.) I doubt that on a table t(a,b), for a suggestion of idx(b,a), pg_advise will
+    suggest idx(a,b). True; bug reproduced, fixed and verified.
+.)	explain
+	select	*
+	from	t
+	where	b =	(select	b
+				from	t
+				where	a =	(select	a
+							from	t
+							where b = 100 ));
+.)	explain
+	select	*
+	from	t
+	where	b =	(select	b
+				from	t
+				where	a =	(select	a
+							from	t
+							where	b =	(select	b
+										from	t
+										where	a =	(select	a
+													from	t
+													where	 b = 100))));
+
+Wish-list:
+==========
+.) Make pg_indexadvisor a user table. Done; used SPI interface.
+      Reason: a normal user cannot do "delete from pg_indexadvisor".
+      Difficulty: Need to know how to do
+                    "insert into pg_indexadvisor values( 1, ...)"
+                  from within the backend; that is, need to study/invent RSI
+				  (Recursive SQL Interface).
+	  Trial code can be seen by searching for:
+				exec_simple_query( "insert into index_advisor values( 10 )",
+									"advisor" /*portal name*/ );
+
+.) Make it plugin-based.
+      Reason: so that someone else with a better idea can replace
+              this advisor, without having to recompile the server.
+      Difficulty: This code calls many internal functoions:
+	                 index_create(), index_drop(), planner(), etc.
+	              That makes it impossible to compile it standalone.
+
+.) Remove the dependency on the global variable "index_candidates"; used for
+     communication between indexadvisor.c and plancat.c.
+    Reason: Bad coding practice.
+	Difficulty: Even though I was successful in updating pg_class.relpages for
+	            the virtual indexes, the planner is still calling smgr.c code to
+				get the number of pages occupied by the index! Hence, I had to
+				use the global the way I did.
+
+Files that shouldn't be in final patch: (done. this list is obsolete now)
+=======================================
+bootparse.y
+defrem.h
+tablecmds.c
+src/backend/commands/indexcmds.c
+src/backend/parser/gram.y
+utility.c
+src/backend/utils/mb/Unicode/euc_kr_to_utf8.map
+src/include/nodes/execnodes.h
+src/include/nodes/parsenodes.h

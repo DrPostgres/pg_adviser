@@ -1,0 +1,24 @@
+
+$ cat workload.sql 
+select * from t where a = 100;
+select * from t where b = 100;
+select * from t where a = 100 and b = 100;
+select * from t where a = 100 or b = 100;
+select * from t1 where a = 100;
+select * from t1 where b = 100;
+select * from t1 where a = 100 and b = 100;
+select * from t1 where a = 100 or b = 100;
+select * from t, t1 where t.a = 100 and t1.a = 100 or t.b = 100 and t1.b = 100;
+
+$ db/bin/pg_advise_index.exe -d postgres -h localhost -p 5432 -U test -o create_index.sql workload.sql 
+load workload from file 'workload.sql'
+Analyzing queries ......... done.
+size = 2608 KB, benefit = 184483000.000000
+size = 2608 KB, benefit = 184481000.000000
+/* 1. t(b): size=2608 KB, profit=184483000.00 */
+/* 2. t(a): size=2608 KB, profit=184481000.00 */
+/* Total size = 5216KB */
+
+$ cat create_index.sql 
+create index idx_t_1 on t (b);
+create index idx_t_2 on t (a);
