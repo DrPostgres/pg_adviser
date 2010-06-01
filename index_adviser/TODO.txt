@@ -1,6 +1,10 @@
 
 TODO:
 =====
+
+.) Get rid of the following warning:
+index_adviser.c:920: warning: ‘resetSecondaryHooks’ was used with no prototype before its definition
+
 .) Remove the newly added parameter to DefineIndex(); Done.
 .) Remove the newly added member to IndexInfo{}; Done.
 .) Remove the newly added member to IndexStmt{}; Done.

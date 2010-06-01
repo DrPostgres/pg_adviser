@@ -1350,8 +1350,10 @@ mark_used_candidates(const Node* const node, List* const candidates)
 
 		case T_OpExpr:
 		{
-			planNode = false;
 			const OpExpr* const expr = (const OpExpr*)node;
+
+			planNode = false;
+
 			foreach( cell, expr->args )
 				mark_used_candidates( (const Node*)lfirst( cell ), candidates );
 		}
@@ -1360,8 +1362,9 @@ mark_used_candidates(const Node* const node, List* const candidates)
 		case T_SubPlan:
 		{
 			/* scan the subplan */
-			planNode = false;
 			const SubPlan* const subPlan = (const SubPlan*)node;
+
+			planNode = false;
 
 			mark_used_candidates( (const Node*)&plannedStmtGlobal->subplans[subPlan->plan_id], candidates );
 		}
@@ -1369,8 +1372,10 @@ mark_used_candidates(const Node* const node, List* const candidates)
 
 		case T_BoolExpr:
 		{
-			planNode = false;
 			const BoolExpr* const expr = (const BoolExpr*)node;
+
+			planNode = false;
+
 			foreach( cell, expr->args )
 			{
 				const Node* const nodeBool = (const Node*)lfirst( cell );
@@ -2026,6 +2031,8 @@ build_composite_candidates( List* list1, List* list2 )
 						 */
 						if( !foundCommon )
 						{
+							signed int cmp;
+
 							/* composite candidate 1 is a combination of
 							 * candidates 1,2 AND
 							 * composite candidate 2 is a combination of
@@ -2090,7 +2097,7 @@ build_composite_candidates( List* list1, List* list2 )
 							}
 
 							/* add new composite candidates to list */
-							signed int cmp = compare_candidates(cic1, cic2);
+							cmp = compare_candidates(cic1, cic2);
 
 							if( cmp == 0 )
 							{
