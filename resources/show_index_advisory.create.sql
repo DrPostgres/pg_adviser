@@ -1,7 +1,9 @@
 
-create function show_index_advisory(p_backend_pid index_advisory.backend_pid%type) returns text
-as
-$$
+create or replace function show_index_advisory() returns text as $$
+	select show_index_advisory(null);
+$$ language sql;
+
+create or replace function show_index_advisory(p_backend_pid index_advisory.backend_pid%type) returns text as $$
 declare
 	pid       p_backend_pid%type;
 	q_advice  text;

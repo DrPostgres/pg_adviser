@@ -1,5 +1,5 @@
 
-create view select_index_advisory as
+create or replace view select_index_advisory as
 select	E'backend_pid\n'
 		||	E'===========\n'
 		||	backend_pid,
