@@ -2209,7 +2209,7 @@ create_virtual_indexes( List* candidates )
 		cand->idxoid = index_create( cand->reloid, idx_name,
 										InvalidOid, indexInfo, BTREE_AM_OID,
 										InvalidOid, op_class, NULL, (Datum)0,
-										false, false, false, true, true );
+										false, false, false, true, false );
 
 		elog( DEBUG1, "IND ADV: virtual index created: oid=%d name=%s size=%d",
 					cand->idxoid, idx_name, cand->pages );
