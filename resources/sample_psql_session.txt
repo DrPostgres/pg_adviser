@@ -50,7 +50,7 @@ postgres=> \d advise_index;
 -------------+--------------------------+-----------
  reloid      | oid                      |
  attrs       | integer[]                |
- profit      | real                     |
+ benefit     | real                     |
  index_size  | integer                  |
  backend_pid | integer                  |
  timestamp   | timestamp with time zone |
@@ -60,8 +60,8 @@ postgres=> \i contrib/pg_index_adviser/advise_index_show.create.sql
 CREATE FUNCTION
 postgres=>
 postgres=> select * from advise_index;
- reloid | attrs | profit | index_size | backend_pid | timestamp
---------+-------+--------+------------+-------------+-----------
+ reloid | attrs | benefit | index_size | backend_pid | timestamp
+--------+-------+---------+------------+-------------+-----------
 (0 rows)
 
 postgres=>
@@ -231,7 +231,7 @@ Nested Loop  (cost=8.54..7395.45 rows=1050 width=16)
 postgres=>
 postgres=> /* following are the contents of the advise_index table */;
 postgres=> select * from advise_index;
- reloid | attrs |    profit    | index_size | backend_pid |           timestamp
+ reloid | attrs |    benefit   | index_size | backend_pid |           timestamp
 --------+-------+--------------+------------+-------------+-------------------------------
   16395 | {1}   |      1782.72 |       2608 |        2272 | 2007-01-13 12:30:02.39+05:30
   16395 | {2}   |      1782.72 |       2608 |        2272 | 2007-01-13 12:30:02.531+05:30

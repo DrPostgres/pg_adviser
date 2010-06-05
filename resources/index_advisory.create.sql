@@ -1,7 +1,7 @@
 
 create table index_advisory(	reloid		oid,
 								attrs		integer[],
-								profit		real,
+								benefit		real,
 								index_size	integer,
 								backend_pid	integer,
 								timestamp	timestamptz);

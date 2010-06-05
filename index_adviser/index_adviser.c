@@ -526,7 +526,7 @@ index_adviser(	Query*			queryCopy,
 		{
 			cand = (IndexCandidate*)lfirst( cell );
 
-			cand->profit = (float4)totalCostSaved
+			cand->benefit = (float4)totalCostSaved
 							* ((float4)cand->pages/totalSize);
 		}
 	}
@@ -1053,7 +1053,7 @@ save_advise( List* candidates )
 									"( %d, array[%s], %f, %d, %d, now());",
 									idxcd->reloid,
 									cols.data,
-									idxcd->profit,
+									idxcd->benefit,
 									idxcd->pages * BLCKSZ/1024, /* in KBs */
 									MyProcPid );
 	} /* foreach cell in candidates */

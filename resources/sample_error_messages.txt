@@ -10,7 +10,7 @@ NOTICE:  view "advise_index" does not exist, skipping
 DROP VIEW
 postgres=>
 postgres=> /* create the advise_index same as provided in the contrib module */;
-postgres=> create table advise_index( reloid oid, attrs integer[], profit real,
+postgres=> create table advise_index( reloid oid, attrs integer[], benefit real,
 postgres(>                             index_size integer, backend_pid integer,
 postgres(>                             timestamp timestamptz);
 CREATE TABLE
@@ -34,7 +34,7 @@ Index Scan using idx_adv_0 on t  (cost=0.00..8.28 rows=1 width=8)
 
 postgres=>
 postgres=> select * from advise_index;
- reloid | attrs | profit  | index_size | backend_pid |           timestamp
+ reloid | attrs | benefit | index_size | backend_pid |           timestamp
 --------+-------+---------+------------+-------------+-------------------------------
   16395 | {1}   | 1782.72 |       2608 |        5256 | 2007-01-13 13:08:53.593+05:30
 (1 row)
@@ -103,7 +103,7 @@ postgres=> drop table if exists advise_index_data cascade;
 NOTICE:  table "advise_index_data" does not exist, skipping
 DROP TABLE
 postgres=>
-postgres=> create table advise_index_data( reloid oid, attrs integer[], profit real,
+postgres=> create table advise_index_data( reloid oid, attrs integer[], benefit real,
 postgres(>                                 index_size integer, backend_pid integer,
 postgres(>                                 timestamp timestamptz);
 CREATE TABLE
@@ -129,7 +129,7 @@ table */;
 postgres=> create or replace rule advise_index_insert as
 postgres-> ON INSERT to advise_index
 postgres-> do instead
-postgres-> INSERT into advise_index_data values (new.reloid, new.attrs, new.profit,
+postgres-> INSERT into advise_index_data values (new.reloid, new.attrs, new.benefit,
 postgres(>									        new.index_size, new.backend_pid,
 postgres(>									        new.timestamp) ;
 CREATE RULE
@@ -177,14 +177,14 @@ postgres=> end;
 ROLLBACK
 postgres=>
 postgres=> select * from advise_index;
- reloid | attrs | profit  | index_size | backend_pid |          timestamp
+ reloid | attrs | benefit | index_size | backend_pid |          timestamp
 --------+-------+---------+------------+-------------+------------------------------
   16395 | {1}   | 1782.72 |       2608 |        5256 | 2007-01-13 13:08:54.25+05:30
 (1 row)
 
 postgres=>
 postgres=> select * from advise_index_data;
- reloid | attrs | profit  | index_size | backend_pid |          timestamp
+ reloid | attrs | benefit | index_size | backend_pid |          timestamp
 --------+-------+---------+------------+-------------+------------------------------
   16395 | {1}   | 1782.72 |       2608 |        5256 | 2007-01-13 13:08:54.25+05:30
 (1 row)

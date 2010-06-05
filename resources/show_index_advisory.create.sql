@@ -31,8 +31,8 @@ begin
 						c.oid as reloid,
 						a.attrs AS colids,
 						MAX( a.index_size ) AS size_in_KB,
-						SUM( a.profit ) AS benefit,
-						SUM( a.profit )/MAX( a.index_size ) AS gain
+						SUM( a.benefit ) AS benefit,
+						SUM( a.benefit )/MAX( a.index_size ) AS gain
 				FROM    index_advisory a,
 						pg_class c
 				WHERE   a.backend_pid = ' || pid || '

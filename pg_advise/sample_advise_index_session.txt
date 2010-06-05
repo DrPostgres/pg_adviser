@@ -15,8 +15,8 @@ load workload from file 'workload.sql'
 Analyzing queries ......... done.
 size = 2608 KB, benefit = 184483000.000000
 size = 2608 KB, benefit = 184481000.000000
-/* 1. t(b): size=2608 KB, profit=184483000.00 */
-/* 2. t(a): size=2608 KB, profit=184481000.00 */
+/* 1. t(b): size=2608 KB, benefit=184483000.00 */
+/* 2. t(a): size=2608 KB, benefit=184481000.00 */
 /* Total size = 5216KB */
 
 $ cat create_index.sql 

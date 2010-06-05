@@ -29,7 +29,7 @@ typedef struct {
 	Oid			idxoid;					/* the virtual index oid */
 	BlockNumber	pages;					/* the estimated size of index */
 	bool		idxused;				/* was this used by the planner? */
-	float4		profit;					/* profit made by using this cand */
+	float4		benefit;				/* benefit made by using this cand */
 
 } IndexCandidate;
 

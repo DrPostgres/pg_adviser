@@ -131,8 +131,8 @@ static int read_advisor_output(PGconn *conn, AdvIndexList *index_list)
 				"SELECT	c.relname,"
 						"attrs AS colids,"
 						"MAX(index_size) AS size_in_pages,"
-						"SUM(profit) AS benefit,"
-						"SUM(profit)/MAX(index_size) AS gain "
+						"SUM(benefit) AS benefit,"
+						"SUM(benefit)/MAX(index_size) AS gain "
 				"FROM	advise_index a,"
 						"pg_class c "
 				"WHERE	a.backend_pid = pg_backend_pid() "
@@ -267,7 +267,7 @@ static void output_recommendation(PGconn *conn, AdvIndexList index_list,
 
 		char *idxdef = get_column_names(conn, info->table, info->col_ids);
 
-		printf("/* %d. %s(%s): size=%d KB, profit=%.2f */\n",
+		printf("/* %d. %s(%s): size=%d KB, benefit=%.2f */\n",
 				i+1, info->table, idxdef, info->size, info->benefit);
 
 		size += info->size;

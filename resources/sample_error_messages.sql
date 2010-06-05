@@ -5,7 +5,7 @@ drop table if exists advise_index;
 drop view if exists advise_index;
 
 /* create the advise_index same as provided in the contrib module */;
-create table advise_index( reloid oid, attrs integer[], profit real,
+create table advise_index( reloid oid, attrs integer[], benefit real,
 							index_size integer, backend_pid integer,
 							timestamp timestamptz);
 
@@ -43,7 +43,7 @@ drop view if exists advise_index;
 
 drop table if exists advise_index_data cascade;
 
-create table advise_index_data( reloid oid, attrs integer[], profit real,
+create table advise_index_data( reloid oid, attrs integer[], benefit real,
 								index_size integer, backend_pid integer,
 								timestamp timestamptz);
 
@@ -57,7 +57,7 @@ explain select * from t where a = 100;
 create or replace rule advise_index_insert as
 ON INSERT to advise_index
 do instead
-INSERT into advise_index_data values (new.reloid, new.attrs, new.profit,
+INSERT into advise_index_data values (new.reloid, new.attrs, new.benefit,
 										new.index_size, new.backend_pid,
 										new.timestamp) ;
 

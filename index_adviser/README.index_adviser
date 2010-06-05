@@ -19,7 +19,7 @@ if executed, will create the indexes suggested by the Index Adviser.
 
    pg_advise_index also has an option where you can specify the maximum size of
 indexes you can afford (disk space restrictions), and it will try to come up
-with only those indexes that would fit in that size with the greatest profit.
+with only those indexes that would fit in that size with the greatest benefit.
 
    iii) A pl/pgsql function, advise_index_show(). This function interprets the
 contents of the advise_index table, and outputs SQL statements (similar to
@@ -219,15 +219,15 @@ column       | type      | meaning
 -------------+-----------+-------------------------------------------------
 reloid       | oid       | the oid of the base table for this index
 attrs        | integer[] | an array containing the indexed column numbers
-profit       | real      | the estimated profit of this index for this query
+benefit      | real      | the estimated benefit of this index for this query
 index_size   | integer   | the estimated size of the index (in disk-pages)
 backend_pid  | integer   | pid of the backend to uniquely identify the source.
 timestamp    | timestamp | Can be used in conjunction with backend_pid.
 
-Note: The profit of an index is estimated as the fraction of the overall profit
+Note: The benefit of an index is estimated as the fraction of the overall benefit
 of all recommended index candidates for a given query
 
-(i.e. overall_profit =  cost(without-virtual-indexes)
+(i.e. overall_benefit =  cost(without-virtual-indexes)
                         - cost(query-with-virtual-indexes))
 
 based on the size of this index compared to the overall size of all indexes
@@ -237,7 +237,7 @@ recommended for this query.
 
       select * from advise_index where backend_pid = pg_backend_pid();
 
- reloid | attrs | profit  | index_size | backend_pid |          timestamp     
+ reloid | attrs | benefit | index_size | backend_pid |          timestamp     
 --------+-------+---------+------------+-------------+------------------------
   16395 | {1}   | 1782.72 |       2608 |        5256 | 2007-01-13 13:08:54.25 
 
@@ -292,7 +292,7 @@ plan. The referenced virtual indexes represent the index recommendation.
 
 7. The virtual indexes are removed from the catalog (drop_virtual_indexes()).
 
-8. Finally, the profit per index is estimated and the recommendation is written
+8. Finally, the benefit per index is estimated and the recommendation is written
 to the advise_index table (save_advise()).
 
 Note: A major portion of the Index Adviser runs inside a SubTransaction, so that
