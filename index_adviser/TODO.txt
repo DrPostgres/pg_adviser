@@ -2,21 +2,21 @@
 TODO:
 =====
 
+.) if query->commandType == CMD_UTILITY, ExplainOnePlan() gets called, but the
+index_adiser() does not get called. Discuss with -hackers to fix this.
+
+.) Introduce a benefit_factor tunable, such that index_adviser() will not
+consider saving the hypothetical plan/candidates if the benefit is less than
+the tunable.
+
+--- old TODO list; some of them may have been done.
+
 .) Get rid of the following warning:
 index_adviser.c:920: warning: ‘resetSecondaryHooks’ was used with no prototype before its definition
-
-.) Remove the newly added parameter to DefineIndex(); Done.
-.) Remove the newly added member to IndexInfo{}; Done.
-.) Remove the newly added member to IndexStmt{}; Done.
-.) Order the #include lines alphabetically, in new files. Done.
 .) Analyze if we need timestamp column in pg_indexadvisor table.
-.) Analyze if we need nattrs column in pg_indexadvisor table. Done; removed.
 .) See why we shouldn't consider GROUP-BY clause in the presence on a WHERE
     clause (scan_query_for_relevant_attributes())?
-.) Eliminate warnings from newly added sources.
-.) Write a pl/pgsql function that interprets the results in pg_indexadvisor.
-    Done.
-.) Sanitize the liked-list logic in various functions.
+.) Sanitize the linked-list logic in various functions.
       Done for remove_irrelevant_candidates().
 	  Pending: merge_candidates(), build_composite_candidates().
 .) Somehow recommend to drop indexes that are not much used (Heikki's idea).
@@ -29,15 +29,27 @@ index_adviser.c:920: warning: ‘resetSecondaryHooks’ was used with no prototy
 .) Reduce the number of heap_open()s by attaching the Relation to the candidate
     structure and heap_close() only when the candidate is being pfree()d.
 .) Create new memory context and do everything within that.
-.) Propose that _compile_assert() macro be added to the core.
+.) Propose on -hackers that _compile_assert() macro be added to the core.
 .) Mention that get_relation_info_hook and explain_get_index_name_hook are
     registered only when required and are unregistered immediately after that.
     This avoids overhead in normal routes.
-    
 .) Also, the 'static global' index_candidates is reset based on the above
     assumption, else, we have to reset it at the top of planner_callback() and
     ExplainOneQuery_callback(), otherwise the is_virtual_index() calls will
 	behave abnormally if there was and ERROR thrown for the previous command! 
+
+DONE:
+=====
+
+.) Remove the newly added parameter to DefineIndex(); Done.
+.) Remove the newly added member to IndexInfo{}; Done.
+.) Remove the newly added member to IndexStmt{}; Done.
+.) Order the #include lines alphabetically, in new files. Done.
+.) Analyze if we need nattrs column in pg_indexadvisor table. Done; removed.
+.) Eliminate warnings from newly added sources.
+.) Write a pl/pgsql function that interprets the results in pg_indexadvisor.
+    Done.
+
  
 BUGS:
 =====

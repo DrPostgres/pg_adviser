@@ -293,7 +293,7 @@ plan. The referenced virtual indexes represent the index recommendation.
 7. The virtual indexes are removed from the catalog (drop_virtual_indexes()).
 
 8. Finally, the benefit per index is estimated and the recommendation is written
-to the advise_index table (save_advise()).
+to the advise_index table (save_advice()).
 
 Note: A major portion of the Index Adviser runs inside a SubTransaction, so that
 just rolling the transation back helps in easy reversal of all the catalog
@@ -321,7 +321,7 @@ i. Credits
       Call scan_plan() to mark the virtual indexes used in the new plan.
       Call drop_virtual_indexes() to destroy the indexes previously created.
       Remove the candidates from the list that are not marked as 'used'.
-      Call save_advise_to_catalog() to save the advisory (details about the
+      Call save_advice_to_catalog() to save the advisory (details about the
        'used' candidates) into a catalog table named pg_indexadvisor.
   Martin Luehring (mar.lue@web.de):
     Improvements for multicolumn indexes.
