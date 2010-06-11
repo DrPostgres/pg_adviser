@@ -1119,6 +1119,8 @@ save_advice( List* candidates )
  * TODO Log the candidates as they are pruned, and remove the call to
  * log_candidates() in index_adviser() after this function is called.
  *
+ * REALLY BIG TODO/FIXME: simplify this function.
+ *
  */
 static List*
 remove_irrelevant_candidates( List* candidates )
@@ -1144,7 +1146,7 @@ remove_irrelevant_candidates( List* candidates )
 			ListCell *prev2;
 			ListCell *next;
 
-			/* remove all candidates indexing currently unsupported relations */
+			/* remove all candidates that are on currently unsupported relations */
 			elog( DEBUG1,
 					"Index candidate(s) on an unsupported relation (%d) found!",
 					base_rel_oid );
@@ -1170,7 +1172,9 @@ remove_irrelevant_candidates( List* candidates )
 		}
 		else
 		{
-			/* remove candidates that match any of already defined indexes */
+			/* Remove candidates that match any of already existing indexes.
+			 * The prefix old_ in these variables means 'existing' index
+			*/
 
 			/* get all index Oids */
 			ListCell	*index_cell;
@@ -1200,7 +1204,7 @@ remove_irrelevant_candidates( List* candidates )
 					for(cell2 = cell, prev2 = prev;
 						cell2 != NULL;
 						cell2 = next)
-					{next = lnext(cell2);{
+					{next = lnext(cell2);{ /* FIXME: move this line to the block below; it doesn't need to be here. */
 
 						IndexCandidate* cand = (IndexCandidate*)lfirst(cell2);
 
@@ -1216,12 +1220,13 @@ remove_irrelevant_candidates( List* candidates )
 									cand->varattno[i]
 									- old_index_info->ii_KeyAttrNumbers[i];
 								++i;
+							/* FIXME: should this while condition be: cmp==0&&(i<min(ncols,ii_NumIndexAttrs))
+ 							 * maybe this is to eliminate candidates that are a prefix match of an existing index. */
 							} while((cmp == 0) && (i < cand->ncols));
 						}
 
 						if(cmp != 0)
 						{
-
 							/* current candidate does not match the current
 							 * index, so go to next candidate.
 							 */
@@ -1239,6 +1244,7 @@ remove_irrelevant_candidates( List* candidates )
 															cell2, prev2);
 							pfree( cand );
 
+							/* If we just deleted the current node of the outer-most loop, fix that. */
 							if (cell2 == cell)
 								cell = next;
 
@@ -1289,7 +1295,7 @@ static void
 mark_used_candidates(const Node* const node, List* const candidates)
 {
 	const ListCell	*cell;
-	bool			planNode = true;	/* is it a plan-node */
+	bool			planNode = true;	/* assume it to be a plan node */
 
 	elog( DEBUG3, "IND ADV: mark_used_candidates: ENTER" );
 
@@ -1306,10 +1312,10 @@ mark_used_candidates(const Node* const node, List* const candidates)
 
 				/* is virtual-index-oid in the IndexScan-list? */
 				IndexCandidate* const idxcd = (IndexCandidate*)lfirst( cell );
-				const bool used = idxcd->idxoid == idxScan->indexid;
+				const bool used = (idxcd->idxoid == idxScan->indexid);
 
 				/* connect the existing value per OR */
-				idxcd->idxused = idxcd->idxused || used;
+				idxcd->idxused = (idxcd->idxused || used);
 			}
 		}
 		break;
@@ -1319,10 +1325,12 @@ mark_used_candidates(const Node* const node, List* const candidates)
 		{
 			/* are there any used virtual-indexes? */
 			const BitmapIndexScan* const bmiScan = (const BitmapIndexScan*)node;
+
 			foreach( cell, candidates )
 			{
 				/* is virtual-index-oid in the BMIndexScan-list? */
 				IndexCandidate* const idxcd = (IndexCandidate*)lfirst( cell );
+
 				const bool used = idxcd->idxoid == bmiScan->indexid;
 
 				/* conntect the existing value per OR */
@@ -1437,7 +1445,7 @@ mark_used_candidates(const Node* const node, List* const candidates)
 			planNode = false;
 		break;
 
-		/* report non-considered parse-node types */
+		/* report parse-node types that we missed */
 		default:
 		{
 			elog( NOTICE, "IND ADV: unhandled plan-node type: %d; Query: %s\n",
@@ -1500,7 +1508,7 @@ mark_used_candidates(const Node* const node, List* const candidates)
 
 /**
  * scan_query
- *    runs thru the whole query
+ *    Runs thru the whole query to find columns to create index candidates.
  */
 static List*
 scan_query(	const Query* const query,
@@ -1537,6 +1545,10 @@ scan_query(	const Query* const query,
 											rangeTableStack );
 	}
 
+	/* FIXME: Why don't we consider the GROUP BY and ORDER BY clause
+	 * irrespective of whether we found candidates in WHERE clause?
+	 */
+
 	/* if no indexcadidate found in "where", scan "group" */
 	if( ( newCandidates == NIL ) && ( query->groupClause != NULL ) )
 	{
@@ -1549,6 +1561,12 @@ scan_query(	const Query* const query,
 	/* if no indexcadidate found in "group", scan "order by" */
 	if( ( newCandidates == NIL ) && ( query->sortClause != NULL ) )
 	{
+
+		/* As of now the order-by and group-by clauses use the same C-struct.
+		 * A rudimentary check to confirm this:
+		 */
+		compile_assert( sizeof(*query->groupClause) == sizeof(*query->sortClause) );
+
 		newCandidates = scan_group_clause(	query->sortClause,
 											query->targetList,
 											opnos,
@@ -1568,7 +1586,7 @@ scan_query(	const Query* const query,
 
 /**
  * scan_group_clause
- *    runs thru the "group-part"
+ *    Runs thru the GROUP BY clause looking for columns to create index candidates.
  */
 static List*
 scan_group_clause(	List* const groupList,
@@ -1606,7 +1624,7 @@ scan_group_clause(	List* const groupList,
 
 /**
  * scan_generic_node
- *    runs thru the given nodes
+ *    Runs thru the given Node looking for columns to create index candidates.
  */
 static List*
 scan_generic_node(	const Node* const root,
@@ -1642,6 +1660,8 @@ scan_generic_node(	const Node* const root,
 			if( expr->boolop != AND_EXPR )
 			{
 				/* non-AND expression */
+				Assert( expr->boolop == OR_EXPR || expr->boolop == NOT_EXPR );
+
 				foreach( cell, expr->args )
 				{
 					const Node* const node = (const Node*)lfirst( cell );
@@ -1821,14 +1841,14 @@ scan_generic_node(	const Node* const root,
  * compare_candidates
  */
 static int
-compare_candidates( const IndexCandidate* _ic1,
-				   const IndexCandidate* _ic2 )
+compare_candidates( const IndexCandidate* ic1,
+				   const IndexCandidate* ic2 )
 {
-	int result = (signed int)_ic1->reloid - (signed int)_ic2->reloid;
+	int result = (signed int)ic1->reloid - (signed int)ic2->reloid;
 
 	if( result == 0 )
 	{
-		result = _ic1->ncols - _ic2->ncols;
+		result = ic1->ncols - ic2->ncols;
 
 		if( result == 0 )
 		{
@@ -1836,9 +1856,9 @@ compare_candidates( const IndexCandidate* _ic1,
 
 			do
 			{
-				result = _ic1->varattno[ i ] - _ic2->varattno[ i ];
+				result = ic1->varattno[ i ] - ic2->varattno[ i ];
 				++i;
-			} while( ( result == 0 ) && ( i < _ic1->ncols ) );
+			} while( ( result == 0 ) && ( i < ic1->ncols ) );
 		}
 	}
 
@@ -1885,7 +1905,10 @@ log_candidates( const char* prefix, List* list )
 
 /**
  * merge_candidates
- * 		It builds new list out of passed in lists, and then frees the two lists
+ * 		It builds new list out of passed in lists, and then frees the two lists.
+ *
+ * This function maintains order of the candidates as determined by
+ * compare_candidates() function.
  */
 static List*
 merge_candidates( List* list1, List* list2 )
@@ -1900,7 +1923,7 @@ merge_candidates( List* list1, List* list2 )
 
 	elog( DEBUG3, "IND ADV: merge_candidates: ENTER" );
 
-	/* list1 and list2 are sorted lists of candidates in ascending order */
+	/* list1 and list2 are assumed to be sorted in ascending order */
 
 	elog( DEBUG1, "IND ADV: ---merge_candidates---" );
 	log_candidates( "idxcd-list1", list1 );
@@ -1916,8 +1939,7 @@ merge_candidates( List* list1, List* list2 )
 	prev2 = NULL;
 
 	for( cell1 = list_head(list1), cell2 = list_head(list2);
-		(cell1 != NULL) && (cell2 != NULL);
-		)
+		(cell1 != NULL) && (cell2 != NULL); )
 	{
 		const int cmp = compare_candidates( (IndexCandidate*)lfirst( cell1 ),
 											(IndexCandidate*)lfirst( cell2 ) );
@@ -1952,6 +1974,7 @@ merge_candidates( List* list1, List* list2 )
 		}
 	}
 
+	/* Now append the leftovers from both the lists; only one of them should have any elements left */
 	for( ; cell1; cell1 = lnext(cell1) )
 		ret = lappend( ret, lfirst(cell1) );
 
@@ -2204,6 +2227,10 @@ create_virtual_indexes( List* candidates )
 	indexInfo->ii_Concurrent		= true;
 
 	/* create index for every list entry */
+	/* TODO: simplify the check condition of the loop; it is basically
+	 * advancing the 'next' pointer, so maybe this will work
+	 * (next=lnext(), cell()); Also, advance the 'prev' pointer in the loop
+	 */
 	for( prev = NULL, cell = list_head(candidates);
 			(cell && (next = lnext(cell))) || cell != NULL;
 			cell = next)
@@ -2235,6 +2262,9 @@ create_virtual_indexes( List* candidates )
 		}
 
 		/* generate indexname */
+		/* FIXME: This index name can very easily collide with any other index
+		 * being created simultaneously by other backend running index adviser.
+		*/
 		sprintf( idx_name, "idx_adv_%d", idx_count );
 
 		/* create the index without data */
@@ -2274,7 +2304,7 @@ drop_virtual_indexes( List* candidates )
 
 	elog( DEBUG3, "IND ADV: drop_virtual_indexes: ENTER" );
 
-	/* drop index for every listentry */
+	/* drop index for every list entry */
 	foreach( cell, candidates )
 	{
 		/* TODO: have a look at implementation of index_drop! citation:
@@ -2345,13 +2375,12 @@ estimate_index_pages(Oid rel_oid, Oid ind_oid )
 		/* the following is based on att_addlength() macro */
 		if( atts[i]->attlen > 0 )
 		{
-			/* no +=; RHS is incrementing data_length by including it in the sum */
+			/* No need to do +=; RHS is incrementing data_length by including it in the sum */
 			data_length = att_align_nominal(data_length, atts[i]->attalign);
 
 			data_length += atts[i]->attlen;
 		}
-		else
-		if( atts[i]->attlen == -1 )
+		else if( atts[i]->attlen == -1 )
 		{
 			data_length += atts[i]->atttypmod + VARHDRSZ;
 		}
@@ -2368,6 +2397,10 @@ estimate_index_pages(Oid rel_oid, Oid ind_oid )
 	 *     Total 'available' space
 	 *       minus space consumed by ItemIdData
 	 *       minus space consumed by fixed-length columns
+	 *
+	 * This calculation is very version specific, so do it for every major release.
+	 * TODO: Analyze it for at least 1 major release and document it (perhaps
+	 * 			branch the code if it deviates to a later release).
 	 */
 	if( var_att_count )
 		data_length += (((float)rel_pages * (BLCKSZ - (sizeof(PageHeaderData)
