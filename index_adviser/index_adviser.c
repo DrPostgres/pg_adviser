@@ -159,7 +159,7 @@ static PlannedStmt* index_adviser(	Query*			query,
 									PlannedStmt*	actual_plan,
 									bool			doingExplain);
 
-static void resetSecondaryHooks();
+static void resetSecondaryHooks(void);
 static bool is_virtual_index( Oid oid, IndexCandidate** cand_out );
 
 /* ------------------------------------------------------------------------
@@ -262,7 +262,7 @@ _PG_init(void)
 	 */
 	resetSecondaryHooks();
 
-	elog( NOTICE, "IND ADV: plugin loaded" );
+//	elog( NOTICE, "IND ADV: plugin loaded" );
 }
 
 /* PG calls this func when un-loading the plugin (if ever) */
@@ -279,6 +279,11 @@ _PG_fini(void)
 
 /* Make sure that Cost datatype can represent negative values */
 compile_assert( ((Cost)-1) < 0 );
+
+/* As of now the order-by and group-by clauses use the same C-struct.
+ * A rudimentary check to confirm this:
+ */
+compile_assert( sizeof(*((Query*)NULL)->groupClause) == sizeof(*((Query*)NULL)->sortClause) );
 
 /**
  * index_adviser
@@ -1561,12 +1566,6 @@ scan_query(	const Query* const query,
 	/* if no indexcadidate found in "group", scan "order by" */
 	if( ( newCandidates == NIL ) && ( query->sortClause != NULL ) )
 	{
-
-		/* As of now the order-by and group-by clauses use the same C-struct.
-		 * A rudimentary check to confirm this:
-		 */
-		compile_assert( sizeof(*query->groupClause) == sizeof(*query->sortClause) );
-
 		newCandidates = scan_group_clause(	query->sortClause,
 											query->targetList,
 											opnos,
@@ -1625,6 +1624,8 @@ scan_group_clause(	List* const groupList,
 /**
  * scan_generic_node
  *    Runs thru the given Node looking for columns to create index candidates.
+ *
+ * TODO: Convert it to use expression_tree_walker().
  */
 static List*
 scan_generic_node(	const Node* const root,
@@ -1822,11 +1823,32 @@ scan_generic_node(	const Node* const root,
 		case T_Param:
 		case T_Const:
 			break;
+		case T_ScalarArrayOpExpr:
+
+			foreach( cell, ((ScalarArrayOpExpr*)root)->args )
+			{
+				const Node* const node = (const Node*)lfirst( cell );
+				candidates = merge_candidates( candidates,
+										scan_generic_node( node, opnos,
+														rangeTableStack));
+			}
+			break;
+		case T_ArrayExpr:
+
+			foreach( cell, ((ArrayExpr*)root)->elements )
+			{
+				const Node* const node = (const Node*)lfirst( cell );
+				candidates = merge_candidates( candidates,
+										scan_generic_node( node, opnos,
+														rangeTableStack));
+			}
+			break;
+
 
 		/* report non-considered parse-node types */
 		default:
-			elog( NOTICE, "IND ADV: unhandled parse-node type: %d; Query: %s\n",
-						(int)nodeTag( root ), debug_query_string );
+/*			elog( NOTICE, "IND ADV: unhandled parse-node type: %d; Query: %s\n",
+						(int)nodeTag( root ), debug_query_string );*/
 			break;
 	}
 
