@@ -2,7 +2,7 @@
 MODULE_big = index_adviser
 OBJS	= index_adviser.o
 
-DOCS = README.index_adviser
+DOCS = README.txt
 
 ifdef USE_PGXS
 PGXS := $(shell pg_config --pgxs)
