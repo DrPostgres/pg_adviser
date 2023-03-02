@@ -17,11 +17,11 @@ drop view if exists select_index_advisory;
 drop function if exists show_index_advisory(index_advisory.backend_pid%type);
 drop table if exists index_advisory;
 
-\i contrib/pgadviser/resources/index_advisory.create.sql
+\i contrib/pg_adviser/resources/index_advisory.create.sql
 
-\i contrib/pgadviser/resources/show_index_advisory.create.sql
+\i contrib/pg_adviser/resources/show_index_advisory.create.sql
 
-\i contrib/pgadviser/resources/select_index_advisory.create.sql
+\i contrib/pg_adviser/resources/select_index_advisory.create.sql
 
 drop table if exists t, t1;
 
