@@ -78,17 +78,27 @@ PG_MODULE_MAGIC;
 /* IND_ADV_TABL does Not Exist */
 #define IND_ADV_ERROR_NE	"relation \""IND_ADV_TABL"\" does not exist."
 
-/* IND_ADV_TABL is Not a Table or a View */
-#define IND_ADV_ERROR_NTV	"\""IND_ADV_TABL"\" is not a table or view."
-
-#define IND_ADV_ERROR_DETAIL												   \
-	"Index Adviser uses \""IND_ADV_TABL"\" table to store it's advisory. You"  \
+#define IND_ADV_ERROR_DETAIL_NE \
+	"Index Adviser uses \""IND_ADV_TABL"\" table to store its advisory. You"  \
 	" should have INSERT permissions on a table or an (INSERT-able) view named"\
 	" \""IND_ADV_TABL"\". Also, make sure that you are NOT running the Index"  \
 	" Adviser under a read-only transaction."
 
-#define IND_ADV_ERROR_HINT													   \
+#define IND_ADV_ERROR_HINT_NE \
 	"Please create the \""IND_ADV_TABL"\" table using the script provided in"  \
+	" pg_advise_index contrib module."
+
+/* IND_ADV_TABL is Not a Table or a View */
+#define IND_ADV_ERROR_NTV	"\""IND_ADV_TABL"\" is not a table or view."
+
+#define IND_ADV_ERROR_DETAIL_NTV \
+	"Index Adviser uses \""IND_ADV_TABL"\" table to store its advisory." \
+	" \""IND_ADV_TABL"\" should be a table or an (INSERT-able) view on which you" \
+	" have INSERT permissions."
+
+#define IND_ADV_ERROR_HINT_NTV \
+	"Please drop the existing \""IND_ADV_TABL"\" entity and create the" \
+	" \""IND_ADV_TABL"\" table using the script provided in"  \
 	" pg_advise_index contrib module."
 
 /* *****************************************************************************
@@ -597,14 +607,6 @@ index_adviser(	Query*			queryCopy,
 			/* reset our 'running' state... */
 			--SuppressRecursion;
 
-			/*
-			 * Add a detailed explanation to the ERROR. Note that these function
-			 * calls will overwrite the DETAIL and HINT that are already
-			 * associated (if any) with this ERROR. XXX consider errcontext().
-			 */
-			errdetail( IND_ADV_ERROR_DETAIL );
-			errhint( IND_ADV_ERROR_HINT );
-
 			/* ... and re-throw the ERROR */
 			PG_RE_THROW();
 		}
@@ -1018,10 +1020,13 @@ save_advice( List* candidates )
 		{
 			relation_close(advise_rel, AccessShareLock);
 
-			/* FIXME: add errdetail() and/or errcontext() calls here. */
 			ereport(ERROR,
 					(errcode(ERRCODE_WRONG_OBJECT_TYPE),
-					 errmsg( IND_ADV_ERROR_NTV )));
+					 errmsg( IND_ADV_ERROR_NTV ),
+					 errdetail( IND_ADV_ERROR_DETAIL_NTV ),
+					 errhint( IND_ADV_ERROR_HINT_NTV ),
+					 errcontext( "during save_advice, advise_rel->rd_rel->relkind = %c",
+						     advise_rel->rd_rel->relkind )));
 		}
 
 		relation_close(advise_rel, AccessShareLock);
@@ -1048,10 +1053,11 @@ save_advice( List* candidates )
 	}
 	else
 	{
-		/* FIXME: add errdetail() and/or errcontext() calls here. */
 		ereport(ERROR,
 				(errcode(ERRCODE_UNDEFINED_TABLE),
-				 errmsg( IND_ADV_ERROR_NE )));
+				 errmsg( IND_ADV_ERROR_NE ),
+				 errdetail( IND_ADV_ERROR_DETAIL_NE ),
+				 errhint( IND_ADV_ERROR_HINT_NE )));
 	}
 
 	initStringInfo( &query );
