@@ -134,17 +134,20 @@ static void save_advice( List* candidates );
 static void log_candidates( const char* text, List* candidates );
 
 /* function used for estimating the size of virtual indexes */
-static int4 estimate_index_pages(Oid rel_oid, Oid ind_oid );
+static int32 estimate_index_pages(Oid rel_oid, Oid ind_oid );
 
-static PlannedStmt* planner_callback(	Query*			query,
-										int				cursorOptions,
-										ParamListInfo	boundParams);
+static PlannedStmt* planner_callback(	Query *query,
+										const char *query_string,
+										int cursorOptions,
+										ParamListInfo boundParams);
 
-static void ExplainOneQuery_callback(	Query*			query,
-										ExplainStmt*	stmt,
-										const char*		queryString,
-										ParamListInfo	params,
-										TupOutputState*	tstate);
+static void ExplainOneQuery_callback(	Query *query,
+										int cursorOptions,
+										IntoClause *into,
+										ExplainState *es,
+										const char *queryString,
+										ParamListInfo params,
+										QueryEnvironment *queryEnv);
 
 static void get_relation_info_callback(	PlannerInfo*	root,
 										Oid				relationObjectId,
@@ -154,6 +157,7 @@ static void get_relation_info_callback(	PlannerInfo*	root,
 static const char* explain_get_index_name_callback( Oid indexId );
 
 static PlannedStmt* index_adviser(	Query*			query,
+									const char*		query_string,
 									int				cursorOptions,
 									ParamListInfo	boundParams,
 									PlannedStmt*	actual_plan,
@@ -278,7 +282,7 @@ _PG_fini(void)
 }
 
 /* Make sure that Cost datatype can represent negative values */
-compile_assert( ((Cost)-1) < 0 );
+// compile_assert( ((Cost)-1) < 0 );
 
 /* As of now the order-by and group-by clauses use the same C-struct.
  * A rudimentary check to confirm this:
@@ -305,6 +309,7 @@ static int8	SuppressRecursion = 0;		  /* suppress recursive calls */
 
 static PlannedStmt*
 index_adviser(	Query*			queryCopy,
+				const char*		query_string,
 				int				cursorOptions,
 				ParamListInfo	boundParams,
 				PlannedStmt		*actual_plan,
@@ -312,8 +317,7 @@ index_adviser(	Query*			queryCopy,
 {
 	bool		saveCandidates = false;
 	int			i;
-	ListCell	*prev,							/* temps for list manipulation*/
-				*cell,
+	ListCell	*cell,
 				*next;
 	List*       opnos = NIL;			  /* contains all vailid operator-ids */
 	List*		candidates = NIL;				  /* the resulting candidates */
@@ -380,9 +384,9 @@ index_adviser(	Query*			queryCopy,
 		 * into an array.
 		 */
 		/* TODO: find out if the memory of opnosResult is ever freed. */
-		for(	opnosResult = OpernameGetCandidates( btreeop, '\0' );
+		for(	opnosResult = OpernameGetCandidates( btreeop, '\0', false );
 				opnosResult != NULL;
-				opnosResult = lnext(opnosResult) )
+				opnosResult = opnosResult->next )
 		{
 			opnos = lappend_oid( opnos, opnosResult->oid );
 		}
@@ -452,7 +456,7 @@ index_adviser(	Query*			queryCopy,
 #endif
 	/* update the global var */
 	index_candidates = candidates;
-
+	
 	/*
 	 * Setup the hook in the planner that injects information into base-tables
 	 * as they are prepared
@@ -462,7 +466,11 @@ index_adviser(	Query*			queryCopy,
 	/* do re-planning using virtual indexes */
 	/* TODO: is the plan ever freed? */
 	t_start( tRePlan );
+#if PG_VERSION_NUM >= 130000
+	new_plan = standard_planner(queryCopy, query_string, cursorOptions, boundParams);
+#else
 	new_plan = standard_planner(queryCopy, cursorOptions, boundParams);
+#endif
 	t_stop( tRePlan );
 
 	/* reset the hook */
@@ -489,6 +497,7 @@ index_adviser(	Query*			queryCopy,
 
 	totalCostSaved = actualTotalCost - newTotalCost;
 
+
 	if( startupCostSaved >0 || totalCostSaved > 0 )
 	{
 		/* scan the plan for virtual indexes used */
@@ -502,6 +511,23 @@ index_adviser(	Query*			queryCopy,
 	}
 
 	/* Remove unused candidates from the list. */
+#if PG_VERSION_NUM >= 1200000
+	for( cell = list_head(candidates);
+			cell != NULL;
+			cell = next )
+	{
+		IndexCandidate *cand = (IndexCandidate*)lfirst( cell );
+
+		next = lnext( candidates, cell );
+
+		if( !cand->idxused )
+		{
+			pfree( cand );
+			candidates = list_delete_cell( candidates, cell );
+		}
+	}
+#else
+	ListCell	*prev;
 	for( prev = NULL, cell = list_head(candidates);
 			cell != NULL;
 			cell = next )
@@ -515,10 +541,8 @@ index_adviser(	Query*			queryCopy,
 			pfree( cand );
 			candidates = list_delete_cell( candidates, cell, prev );
 		}
-		else
-			prev = cell;
 	}
-
+#endif
 	/* update the global var */
 	index_candidates = candidates;
 
@@ -531,7 +555,7 @@ index_adviser(	Query*			queryCopy,
 	/* calculate the share of cost saved by each index */
 	if( saveCandidates )
 	{
-		int4 totalSize = 0;
+		int32 totalSize = 0;
 		IndexCandidate *cand;
 
 		foreach( cell, candidates )
@@ -565,6 +589,8 @@ index_adviser(	Query*			queryCopy,
 		/* TODO: try to free the new plan node */
 		new_plan = NULL;
 	}
+
+
 #if CREATE_V_INDEXES
 	/*
 	 * Undo the metadata changes; for eg. pg_depends entries will be removed
@@ -574,6 +600,7 @@ index_adviser(	Query*			queryCopy,
 	 * transaction, after the ROLLBACK! All the memory allocated after BEGIN is
 	 * freed in ROLLBACK.
 	 */
+
 	RollbackAndReleaseCurrentSubTransaction();
 
 	/* restore the resource-owner */
@@ -583,6 +610,7 @@ index_adviser(	Query*			queryCopy,
 		elog( WARNING, "IND ADV: SPI_finish failed." );
 #endif
 	/* save the advise into the table */
+
 	if( saveCandidates )
 	{
 		t_start( tSaveAdvise );
@@ -613,19 +641,21 @@ index_adviser(	Query*			queryCopy,
 		t_stop( tSaveAdvise );
 	}
 
+
 	/* free the candidate-list */
 	elog( DEBUG1, "IND ADV: Deleting candidate list." );
-	if( !saveCandidates || !doingExplain )
+	if(!saveCandidates || !doingExplain)
 	{
-		foreach( cell, index_candidates )
-			pfree( (IndexCandidate*)lfirst( cell ) );
+		foreach( cell, index_candidates ){
+			pfree((IndexCandidate*)lfirst( cell ));
+		}
 
 		list_free( index_candidates );
-
 		index_candidates = NIL;
 	}
 
 	t_stop( tAdviser );
+
 
 	/* emit debug info */
 	elog( DEBUG1, "IND ADV: old cost %.2f..%.2f", actualStartupCost,
@@ -636,6 +666,7 @@ index_adviser(	Query*			queryCopy,
 					totalCostSaved,
 					(unsigned long)startupGainPerc,
 					(unsigned long)totalGainPerc );
+
 
 	/* print profiler information */
 	elog( DEBUG2, "IND ADV: [Prof] * Query String           : %s",
@@ -665,6 +696,7 @@ DoneCleanly:
 
 	elog( DEBUG3, "IND ADV: EXIT" );
 
+
 	return doingExplain && saveCandidates ? new_plan : NULL;
 }
 
@@ -677,9 +709,10 @@ DoneCleanly:
  * hypothetical indexes.
  */
 static PlannedStmt*
-planner_callback(	Query*			query,
-					int				cursorOptions,
-					ParamListInfo	boundParams)
+planner_callback(	Query *query,
+					const char *query_string,
+					int cursorOptions,
+					ParamListInfo boundParams)
 {
 	Query	*queryCopy;
 	PlannedStmt *actual_plan;
@@ -697,14 +730,17 @@ planner_callback(	Query*			query,
 	queryCopy = copyObject( query );
 
 	/* Generate a plan using the standard planner */
+#if PG_VERSION_NUM >= 130000
+	actual_plan = standard_planner( query, query_string, cursorOptions, boundParams );
+#else
 	actual_plan = standard_planner( query, cursorOptions, boundParams );
+#endif
 
 	/* send the actual plan for comparison with a hypothetical plan */
-	new_plan = index_adviser( queryCopy, cursorOptions, boundParams,
+	new_plan = index_adviser( queryCopy, query_string, cursorOptions, boundParams,
 								actual_plan, false );
 
 	/* TODO: try to free the redundant new_plan */
-
 	return actual_plan;
 }
 
@@ -721,16 +757,27 @@ planner_callback(	Query*			query,
  * hook can send it to the log.
  */
 static void
-ExplainOneQuery_callback(	Query			*query,
-							ExplainStmt		*stmt,
-							const char		*queryString,
-							ParamListInfo	params,
-							TupOutputState	*tstate)
+ExplainOneQuery_callback(	Query *query,
+							int cursorOptions,
+							IntoClause *into,
+							ExplainState *es,
+							const char *queryString,
+							ParamListInfo params,
+							QueryEnvironment *queryEnv)
 {
 	Query		*queryCopy;
 	PlannedStmt	*actual_plan;
 	PlannedStmt	*new_plan;
 	ListCell	*cell;
+	instr_time	planstart;
+	instr_time	planduration;
+	BufferUsage bufusage_start,
+				bufusage;
+
+
+	/*if (es->buffers)
+		bufusage_start = pgBufferUsage;*/
+	INSTR_TIME_SET_CURRENT(planstart);
 
 	resetSecondaryHooks();
 
@@ -738,29 +785,56 @@ ExplainOneQuery_callback(	Query			*query,
 	queryCopy = copyObject( query );
 
 	/* plan the query */
-	actual_plan = standard_planner( query, 0, params );
+#if PG_VERSION_NUM >= 130000
+	actual_plan = standard_planner( query, queryString, cursorOptions, params );
+#else
+	actual_plan = standard_planner( query, cursorOptions, params );
+#endif
+
+	INSTR_TIME_SET_CURRENT(planduration);
+	INSTR_TIME_SUBTRACT(planduration, planstart);
+
+	
+	/* calc differences of buffer counters. */
+	if (es->buffers)
+	{
+		memset(&bufusage, 0, sizeof(BufferUsage));
+		// BufferUsageAccumDiff(&bufusage, &pgBufferUsage, &bufusage_start);
+	}
 
 	/* run it (if needed) and produce output */
-	ExplainOnePlan( actual_plan, params, stmt, tstate );
-
+#if PG_VERSION_NUM >= 130000
+	ExplainOnePlan(actual_plan, into, es, queryString, params, queryEnv,
+					&planduration, (es->buffers ? &bufusage : NULL));
+#else
+	ExplainOnePlan(actual_plan, into, es, queryString, params, queryEnv,
+					&planduration);
+#endif
 	/* re-plan the query */
-	new_plan = index_adviser( queryCopy, 0, params, actual_plan, true );
+	new_plan = index_adviser( queryCopy, queryString, cursorOptions, params,
+								actual_plan, true );
 
 	if ( new_plan )
 	{
-		bool analyze = stmt->analyze;
+		bool analyze = es->analyze;
 
-		stmt->analyze = false;
+		es->analyze = false;
 
 	    explain_get_index_name_hook = explain_get_index_name_callback;
 
-		do_text_output_oneline(tstate, ""); /* separator line */
-		do_text_output_oneline(tstate, "** Plan with hypothetical indexes **");
-		ExplainOnePlan( new_plan, params, stmt, tstate );
+		// do_text_output_oneline(tstate, ""); /* separator line */
+		// do_text_output_oneline(tstate, "** Plan with hypothetical indexes **");
+#if PG_VERSION_NUM >= 130000
+		ExplainOnePlan(new_plan, into, es, queryString, params, queryEnv,
+						&planduration, (es->buffers ? &bufusage : NULL));
+#else
+		ExplainOnePlan(new_plan, into, es, queryString, params, queryEnv,
+						&planduration);
+#endif
 
 	    explain_get_index_name_hook = NULL;
 
-	    stmt->analyze = analyze;
+	    es->analyze = analyze;
 	}
 
 	/* The candidates might not have been destroyed by the Index Adviser, do it
@@ -807,7 +881,6 @@ get_relation_info_callback(	PlannerInfo	*root,
 		{
 			/* estimate the size */
 			cand->pages = estimate_index_pages(cand->reloid, cand->idxoid);
-
 			info->pages = cand->pages;
 		}
 	}
@@ -842,12 +915,12 @@ get_relation_info_callback(	PlannerInfo	*root,
 		 * the opfamily array needs an extra, terminating zero at the end.
 		 * We pre-zero the ordering info in case the index is unordered.
 		 */
-		info->indexkeys = (int *) palloc(sizeof(int) * ncolumns);
-		info->opfamily = (Oid *) palloc0(sizeof(Oid) * (4 * ncolumns + 1));
+		info->indexkeys = (int *) palloc_array(int, ncolumns);
+		info->opfamily = (Oid *) palloc0_array(Oid, (4 * ncolumns + 1));
 		info->opcintype = info->opfamily + (ncolumns + 1);
 		info->fwdsortop = info->opcintype + ncolumns;
 		info->revsortop = info->fwdsortop + ncolumns;
-		info->nulls_first = (bool *) palloc0(sizeof(bool) * ncolumns);
+		info->nulls_first = (bool *) palloc0_array(bool, ncolumns);
 
 		for (i = 0; i < ncolumns; i++)
 		{
@@ -1027,16 +1100,16 @@ save_advice( List* candidates )
 		relation_close(advise_rel, AccessShareLock);
 #else
 		/*
-		 * heap_open() makes sure that the oid does not represent an INDEX or a
+		 * relation_open() makes sure that the oid does not represent an INDEX or a
 		 * COMPOSITE type, else it will raise an ERROR, which is exactly what we
-		 * want. The comments above heap_open() ask the caller not to assume any
+		 * want. The comments above relation_open() ask the caller not to assume any
 		 * storage since the returned relation may be a VIEW; but we don't mind,
 		 * since the user may have defined some rules on it to make the INSERTs
 		 * work smoothly! If not, we leave it upto the executor to raise ERROR.
 		 */
 		PG_TRY();
 		{
-			heap_close(heap_open(advise_oid, AccessShareLock), AccessShareLock);
+			relation_close(relation_open(advise_oid, AccessShareLock), AccessShareLock);
 		}
 		PG_CATCH();
 		{
@@ -1064,7 +1137,7 @@ save_advice( List* candidates )
 
 		if( !idxcd->idxused )
 			continue;
-
+		
 		/* pfree() the memory allocated for the previous candidate. FIXME: Avoid
 		 * meddling with the internals of a StringInfo, and try to use an API.
 		 */
@@ -1138,17 +1211,16 @@ remove_irrelevant_candidates( List* candidates )
 		ListCell *old_cell = cell;
 
 		Oid base_rel_oid = ((IndexCandidate*)lfirst( cell ))->reloid;
-		Relation base_rel = heap_open( base_rel_oid, AccessShareLock );
+		Relation base_rel = relation_open( base_rel_oid, AccessShareLock );
 
 		/* decide if the relation is unsupported. This check is now done before
 		 * creating a candidate in scan_generic_node(); but still keeping the
 		 * code here.
 		 */
-		if((base_rel->rd_istemp == true)
+		if((base_rel->rd_islocaltemp == true)
 			|| IsSystemRelation(base_rel))
 		{
 			ListCell *cell2;
-			ListCell *prev2;
 			ListCell *next;
 
 			/* remove all candidates that are on currently unsupported relations */
@@ -1157,6 +1229,22 @@ remove_irrelevant_candidates( List* candidates )
 					base_rel_oid );
 
 			/* Remove all candidates with same unsupported relation */
+#if PG_VERSION_NUM >= 120000
+			for(cell2 = cell; cell2 != NULL; cell2 = next)
+			{
+				next = lnext(candidates, cell2);
+
+				if(((IndexCandidate*)lfirst(cell2))->reloid == base_rel_oid)
+				{
+					pfree((IndexCandidate*)lfirst(cell2));
+					candidates = list_delete_cell( candidates, cell2 );
+
+					if(cell2 == cell)
+						cell = next;
+				}
+			}
+#else
+			ListCell	*prev2;	
 			for(cell2 = cell, prev2 = prev; cell2 != NULL; cell2 = next)
 			{
 				next = lnext(cell2);
@@ -1174,6 +1262,7 @@ remove_irrelevant_candidates( List* candidates )
 					prev2 = cell2;
 				}
 			}
+#endif
 		}
 		else
 		{
@@ -1199,18 +1288,26 @@ remove_irrelevant_candidates( List* candidates )
 					&& old_index_info->ii_Predicate == NIL )
 				{
 					ListCell *cell2;
+#if PG_VERSION_NUM < 120000
 					ListCell *prev2;
+#endif
 					ListCell *next;
 
 					Assert( old_index_info->ii_Expressions == NIL );
 					Assert( old_index_info->ii_Predicate == NIL );
 
 					/* search for a matching candidate */
+#if PG_VERSION_NUM >= 120000
+					for(cell2 = cell;
+						cell2 != NULL;
+						cell2 = next)
+					{next = lnext(candidates, cell2);{ /* FIXME: move this line to the block below; it doesn't need to be here. */
+#else
 					for(cell2 = cell, prev2 = prev;
 						cell2 != NULL;
 						cell2 = next)
 					{next = lnext(cell2);{ /* FIXME: move this line to the block below; it doesn't need to be here. */
-
+#endif
 						IndexCandidate* cand = (IndexCandidate*)lfirst(cell2);
 
 						signed int cmp = (signed int)cand->ncols
@@ -1223,7 +1320,7 @@ remove_irrelevant_candidates( List* candidates )
 							{
 								cmp =
 									cand->varattno[i]
-									- old_index_info->ii_KeyAttrNumbers[i];
+									- old_index_info->ii_IndexAttrNumbers[i];
 								++i;
 							/* FIXME: should this while condition be: cmp==0&&(i<min(ncols,ii_NumIndexAttrs))
  							 * maybe this is to eliminate candidates that are a prefix match of an existing index. */
@@ -1235,7 +1332,9 @@ remove_irrelevant_candidates( List* candidates )
 							/* current candidate does not match the current
 							 * index, so go to next candidate.
 							 */
+#if PG_VERSION_NUM < 120000
 							prev2 = cell2;
+#endif
 						}
 						else
 						{
@@ -1245,8 +1344,13 @@ remove_irrelevant_candidates( List* candidates )
 							 		old_index_oid );
 
 							/* remove the candidate from the list */
+#if PG_VERSION_NUM >= 120000
+							candidates = list_delete_cell(candidates,
+															cell2);
+#else
 							candidates = list_delete_cell(candidates,
 															cell2, prev2);
+#endif
 							pfree( cand );
 
 							/* If we just deleted the current node of the outer-most loop, fix that. */
@@ -1275,7 +1379,7 @@ remove_irrelevant_candidates( List* candidates )
 		}
 
 		/* close the relation */
-		heap_close( base_rel, AccessShareLock );
+		relation_close( base_rel, AccessShareLock );
 
 		/*
 		 * Move the pointer forward, only if the crazy logic above did not do it
@@ -1284,8 +1388,12 @@ remove_irrelevant_candidates( List* candidates )
 		 */
 		if(cell == old_cell)
 		{
+#if PG_VERSION_NUM >= 120000
+			cell = lnext(candidates, cell);
+#else
 			prev = cell;
 			cell = lnext(cell);
+#endif
 		}
 	}
 
@@ -1308,6 +1416,7 @@ mark_used_candidates(const Node* const node, List* const candidates)
 	{
 		/* if the node is an indexscan */
 		case T_IndexScan:
+		case T_IndexOnlyScan:
 		{
 			/* are there any used virtual-indexes? */
 			const IndexScan* const idxScan = (const IndexScan*)node;
@@ -1378,7 +1487,7 @@ mark_used_candidates(const Node* const node, List* const candidates)
 		case T_NestLoop:
 		case T_MergeJoin:
 		case T_HashJoin:
-		case T_Join:
+		case T_JoinExpr:
 		{
 			/* scan join-quals */
 			const Join* const join = (const Join*)node;
@@ -1439,7 +1548,7 @@ mark_used_candidates(const Node* const node, List* const candidates)
 		case T_Hash:
 		case T_SetOp:
 		case T_Limit:
-		case T_Scan:
+		case T_SampleScan:
 		case T_SeqScan:
 		case T_BitmapHeapScan:
 		break;
@@ -1602,7 +1711,7 @@ scan_group_clause(	List* const groupList,
 	foreach( cell, groupList )
 	{
 		/* convert to group-element */
-		const GroupClause* const groupElm = (const GroupClause*)lfirst( cell );
+		const SortGroupClause* const groupElm = (const SortGroupClause*)lfirst( cell );
 
 		/* get the column the group-clause is for */
 		const TargetEntry* const targetElm = list_nth( targetList,
@@ -1742,10 +1851,10 @@ scan_generic_node(	const Node* const root,
 			/* only relations have indexes */
 			if( rte->rtekind == RTE_RELATION )
 			{
-				Relation base_rel = heap_open( rte->relid, AccessShareLock );
+				Relation base_rel = relation_open( rte->relid, AccessShareLock );
 
 				/* We do not support catalog tables and temporary tables */
-				if( base_rel->rd_istemp != true
+				if( base_rel->rd_islocaltemp != true
 					&& !IsSystemRelation(base_rel)
 					/* and don't recommend indexes on hidden/system columns */
 					&& expr->varattno > 0
@@ -1756,8 +1865,7 @@ scan_generic_node(	const Node* const root,
 				{
 					/* create index-candidate and build a new list */
 					int				i;
-					IndexCandidate	*cand = (IndexCandidate*)palloc0(
-														sizeof(IndexCandidate));
+					IndexCandidate	*cand = (IndexCandidate*)palloc0(sizeof(IndexCandidate));
 
 					cand->varno         = expr->varno;
 					cand->varlevelsup   = expr->varlevelsup;
@@ -1777,7 +1885,7 @@ scan_generic_node(	const Node* const root,
 					candidates = list_make1( cand );
 				}
 
-				heap_close( base_rel, AccessShareLock );
+				relation_close( base_rel, AccessShareLock );
 			}
 		}
 		break;
@@ -1913,8 +2021,11 @@ log_candidates( const char* prefix, List* list )
 
 		for( i = 0; i < cand->ncols; ++i )
 			appendStringInfo( &str, "%s%d", (i>0?",":""), cand->varattno[ i ] );
-
+#if PG_VERSION_NUM >= 120000
+		appendStringInfo( &str, ")%c", ((lnext( list, cell ) != NULL)?',':' ') );
+#else
 		appendStringInfo( &str, ")%c", ((lnext( cell ) != NULL)?',':' ') );
+#endif
 	}
 
 	elog( DEBUG1, "IND ADV: %s: |%d| {%s}", prefix, list_length(list),
@@ -1938,7 +2049,9 @@ merge_candidates( List* list1, List* list2 )
 	List *ret;
 	ListCell *cell1;
 	ListCell *cell2;
+#if PG_VERSION_NUM < 120000
 	ListCell *prev2;
+#endif
 
 	if( list_length( list1 ) == 0 && list_length( list2 ) == 0 )
 		return NIL;
@@ -1958,7 +2071,9 @@ merge_candidates( List* list1, List* list2 )
 		return list1;
 
 	ret = NIL;
+#if PG_VERSION_NUM < 120000
 	prev2 = NULL;
+#endif
 
 	for( cell1 = list_head(list1), cell2 = list_head(list2);
 		(cell1 != NULL) && (cell2 != NULL); )
@@ -1971,37 +2086,61 @@ merge_candidates( List* list1, List* list2 )
 			/* next candidate comes from list 1 */
 			ret = lappend( ret, lfirst( cell1 ) );
 
+#if PG_VERSION_NUM >= 120000
+			cell1 = lnext( list1, cell1 );
+#else
 			cell1 = lnext( cell1 );
+#endif
 
 			/* if we have found two identical candidates then we remove the
 			 * candidate from list 2
 			 */
 			if( cmp == 0 )
 			{
+#if PG_VERSION_NUM >= 120000
+				ListCell *next = lnext( list2, cell2 );
+
+				pfree( (IndexCandidate*)lfirst( cell2 ) );
+				list2 = list_delete_cell( list2, cell2 );
+
+				cell2 = next;
+#else
 				ListCell *next = lnext( cell2 );
 
 				pfree( (IndexCandidate*)lfirst( cell2 ) );
 				list2 = list_delete_cell( list2, cell2, prev2 );
 
 				cell2 = next;
+#endif
 			}
 		}
 		else
 		{
 			/* next candidate comes from list 2 */
 			ret = lappend( ret, lfirst( cell2 ) );
-
+#if PG_VERSION_NUM >= 120000
+			cell2 = lnext( list2, cell2 );
+#else
 			prev2 = cell2;
 			cell2 = lnext( cell2 );
+#endif
 		}
 	}
 
 	/* Now append the leftovers from both the lists; only one of them should have any elements left */
-	for( ; cell1; cell1 = lnext(cell1) )
+#if PG_VERSION_NUM >= 120000
+	for( ; cell1; cell1 = lnext(list1, cell1) )
 		ret = lappend( ret, lfirst(cell1) );
+
+	for( ; cell2; cell2 = lnext(list2, cell2) )
+		ret = lappend( ret, lfirst(cell2) );
+#else
+	for( ; cell1; cell1 = lnext(cell1) )
+		ret = lappend( ret, lfirst(cell2) );
 
 	for( ; cell2; cell2 = lnext(cell2) )
 		ret = lappend( ret, lfirst(cell2) );
+#endif
 
 	list_free( list1 );
 	list_free( list2 );
@@ -2060,7 +2199,11 @@ build_composite_candidates( List* list1, List* list2 )
 				relOid = cand2->reloid;
 
 				do
+#if PG_VERSION_NUM >= 120000
+					cell1 = lnext( list1, cell1 );
+#else
 					cell1 = lnext( cell1 );
+#endif
 				while( cell1 != NULL && (relOid > cand1->reloid));
 			}
 			else
@@ -2069,7 +2212,11 @@ build_composite_candidates( List* list1, List* list2 )
 				relOid = cand1->reloid;
 
 				do
+#if PG_VERSION_NUM >= 120000
+					cell2 = lnext( list2, cell2 );
+#else
 					cell2 = lnext( cell2 );
+#endif
 				while( cell2 != NULL && ( relOid > cand2->reloid ));
 			}
 		}
@@ -2116,11 +2263,9 @@ build_composite_candidates( List* list1, List* list2 )
 							 * candidates 2,1
 							 */
 							IndexCandidate* cic1
-								= (IndexCandidate*)palloc(
-													sizeof(IndexCandidate));
+								= (IndexCandidate*)palloc(sizeof(IndexCandidate));
 							IndexCandidate* cic2
-								= (IndexCandidate*)palloc(
-													sizeof(IndexCandidate));
+								= (IndexCandidate*)palloc(sizeof(IndexCandidate));
 
 							/* init some members of composite candidate 1 */
 							cic1->varno			= -1;
@@ -2198,13 +2343,18 @@ build_composite_candidates( List* list1, List* list2 )
 						}
 					}
 
+#if PG_VERSION_NUM >= 120000
+					l1b = lnext( list1, l1b );
+#else
 					l1b = lnext( l1b );
-
+#endif
 				} while( ( l1b != NULL ) &&
 					( relationOid == ((IndexCandidate*)lfirst( l1b ))->reloid));
-
+#if PG_VERSION_NUM >= 120000
+				cell2 = lnext( list2, cell2 );
+#else
 				cell2 = lnext( cell2 );
-
+#endif
 			} while( ( cell2 != NULL ) &&
 				( relationOid == ((IndexCandidate*)lfirst( cell2 ))->reloid ) );
 			cell1 = l1b;
@@ -2226,92 +2376,137 @@ DoneCleanly:
  *
  * It may delete some candidates from the list passed in to it.
  */
-static List*
-create_virtual_indexes( List* candidates )
+ 
+static List *
+create_virtual_indexes(List *candidates)
 {
-	ListCell	*cell;					  /* an entry from the candidate-list */
-	ListCell	*prev, *next;						 /* for list manipulation */
-	char		idx_name[ 16 ];		/* contains the name of the current index */
-	int			idx_count = 0;				   /* number of the current index */
-	IndexInfo*	indexInfo;
-	Oid			op_class[INDEX_MAX_KEYS];/* needed for creating indexes */
+    ListCell    *cell, *prev;                      /* an entry from the candidate-list */
+    ListCell    *next;               /* for list manipulation */
+    char        idx_name[16];               /* contains the name of the current index */
+    int         idx_count = 0;              /* number of the current index */
 
-	elog( DEBUG3, "IND ADV: create_virtual_indexes: ENTER" );
+    elog(DEBUG3, "IND ADV: create_virtual_indexes: ENTER");
 
-	/* fill index-info */
-	indexInfo = makeNode( IndexInfo );
+    for (cell = list_head(candidates);
+#if PG_VERSION_NUM >= 120000
+            (cell && (next = lnext(candidates, cell))) || cell != NULL;
+#else
+            (cell && (next = lnext(cell))) || cell != NULL;
+#endif
+            cell = next)
+    {
+        int         i;
+        IndexCandidate *cand = (IndexCandidate *) lfirst(cell);
+        Relation    rel = relation_open(cand->reloid, AccessShareLock);
+        TupleDesc   tupDesc = RelationGetDescr(rel);
+        List       *indexColNames = NIL;
+		Oid			collationObjectId[INDEX_MAX_KEYS];
+		Oid			classObjectId[INDEX_MAX_KEYS];
+		int16		coloptions[INDEX_MAX_KEYS];
 
-	indexInfo->ii_Expressions		= NIL;
-	indexInfo->ii_ExpressionsState	= NIL;
-	indexInfo->ii_Predicate			= NIL;
-	indexInfo->ii_PredicateState	= NIL;
-	indexInfo->ii_Unique			= false;
-	indexInfo->ii_Concurrent		= true;
+        IndexInfo  *indexInfo = makeNode(IndexInfo);
+	indexInfo->ii_Expressions = NIL;
+	indexInfo->ii_ExpressionsState = NIL;
+	indexInfo->ii_Predicate = NIL;
+	indexInfo->ii_PredicateState = NULL;
+	indexInfo->ii_ExclusionOps = NULL;
+	indexInfo->ii_ExclusionProcs = NULL;
+	indexInfo->ii_ExclusionStrats = NULL;
+	indexInfo->ii_Unique = false;
+	indexInfo->ii_ReadyForInserts = false;
+#if PG_VERSION_NUM >= 150000
+	indexInfo->ii_NullsNotDistinct = false;
+	indexInfo->ii_CheckedUnchanged = false;
+	indexInfo->ii_IndexUnchanged = false;
+#endif
+	indexInfo->ii_Concurrent = true;
+	indexInfo->ii_BrokenHotChain = false;
+	indexInfo->ii_ParallelWorkers = 0;
+	indexInfo->ii_Am = BTREE_AM_OID;
+	indexInfo->ii_AmCache = NULL;
+	indexInfo->ii_Context = CurrentMemoryContext;
 
-	/* create index for every list entry */
-	/* TODO: simplify the check condition of the loop; it is basically
-	 * advancing the 'next' pointer, so maybe this will work
-	 * (next=lnext(), cell()); Also, advance the 'prev' pointer in the loop
-	 */
-	for( prev = NULL, cell = list_head(candidates);
-			(cell && (next = lnext(cell))) || cell != NULL;
-			cell = next)
+	indexInfo->ii_NumIndexAttrs = cand->ncols;
+	indexInfo->ii_NumIndexKeyAttrs = cand->ncols;
+#if PG_VERSION_NUM >= 130000
+	indexInfo->ii_OpclassOptions = NULL;
+#endif
+
+	for (i = 0; i < cand->ncols; ++i)
 	{
-		int			i;
+		Form_pg_attribute attr = TupleDescAttr(tupDesc, cand->varattno[i] - 1);
+		indexColNames = lappend(indexColNames, NameStr(attr->attname));
+		indexInfo->ii_IndexAttrNumbers[i] = cand->varattno[i];
 
-		IndexCandidate* const cand = (IndexCandidate*)lfirst( cell );
+		Oid typeOid = attr->atttypid;
+		Oid opClassOid;
 
-		indexInfo->ii_NumIndexAttrs = cand->ncols;
-
-		for( i = 0; i < cand->ncols; ++i )
+		opClassOid = GetDefaultOpClass(typeOid, BTREE_AM_OID);
+		if (!OidIsValid(opClassOid))
 		{
-			/* prepare op_class[] */
-			op_class[i] = GetDefaultOpClass( cand->vartype[ i ], BTREE_AM_OID );
-
-			if( op_class[i] == InvalidOid )
-				/* don't create this index if couldn't find a default operator*/
-				break;
-
-			/* ... and set indexed attribute number */
-			indexInfo->ii_KeyAttrNumbers[i] = cand->varattno[i];
+			elog(ERROR, "Default operator class not found for column type OID %u", typeOid);
 		}
 
-		/* if we decided not to create the index above, try next candidate */
-		if( i < cand->ncols )
-		{
-			candidates = list_delete_cell( candidates, cell, prev );
-			continue;
-		}
-
-		/* generate indexname */
-		/* FIXME: This index name can very easily collide with any other index
-		 * being created simultaneously by other backend running index adviser.
-		*/
-		sprintf( idx_name, "idx_adv_%d", idx_count );
-
-		/* create the index without data */
-		cand->idxoid = index_create( cand->reloid, idx_name,
-										InvalidOid, indexInfo, BTREE_AM_OID,
-										InvalidOid, op_class, NULL, (Datum)0,
-										false, false, false, true, false );
-
-		elog( DEBUG1, "IND ADV: virtual index created: oid=%d name=%s size=%d",
-					cand->idxoid, idx_name, cand->pages );
-
-		/* increase count for the next index */
-		++idx_count;
-		prev = cell;
+		collationObjectId[i] = InvalidOid;
+		coloptions[i] = 0;
+		classObjectId[i] = opClassOid;
 	}
 
-	pfree( indexInfo );
 
-	/* do CCI to make the new metadata changes "visible" */
-	CommandCounterIncrement();
+        /* if we couldn't find default operators for all columns, skip this index */
+        if (i < cand->ncols)
+        {
+#if PG_VERSION_NUM >= 120000
+            candidates = list_delete_cell(candidates, cell);
+#else
+            candidates = list_delete_cell(candidates, cell, prev);
+#endif
+            pfree(indexInfo);
+            continue;
+        }
 
-	elog( DEBUG3, "IND ADV: create_virtual_indexes: EXIT" );
+        /* generate index name */
+        sprintf(idx_name, "idx_adv_%d", idx_count);
+		
+        /* create the index without data */
+        cand->idxoid = index_create(	rel, /* heapRelation */
+				    	idx_name, /* indexRelationName */
+				 	InvalidOid, /* indexRelationId */
+					InvalidOid, /* parentIndexRelid */
+					InvalidOid, /* parentConstraintId */
+                                    	InvalidOid, /* relFileNode */
+					indexInfo, /* indexInfo */
+					indexColNames, /* indexColNames */
+                                    	BTREE_AM_OID, /* accessMethodObjectId */
+					InvalidOid, /* tableSpaceId */
+					collationObjectId, /* collationObjectId */
+					classObjectId, /* classObjectId */
+					coloptions, /* coloptions */
+                                    	(Datum) 0, /* reloptions */
+					INDEX_CREATE_SKIP_BUILD, /* flags */
+                                    	0, /* constr_flags */
+					false, /* allow_system_table_mods */
+					false, /* is_internal */
+					NULL); /* constraintId */
+		
+        elog(DEBUG1, "IND ADV: virtual index created: oid=%d name=%s size=%d",
+             cand->idxoid, idx_name, cand->pages);
 
-	return candidates;
+        /* increase count for the next index */
+        ++idx_count;
+		prev = cell;
+		
+        pfree(indexInfo);
+    }
+
+    /* do CCI to make the new metadata changes "visible" */
+    CommandCounterIncrement();
+
+    elog(DEBUG3, "IND ADV: create_virtual_indexes: EXIT");
+
+    return candidates;
 }
+
 #endif
 
 #if CREATE_V_INDEXES
@@ -2352,14 +2547,14 @@ drop_virtual_indexes( List* candidates )
 }
 #endif
 
-static int4
+static int32
 estimate_index_pages(Oid rel_oid, Oid ind_oid )
 {
 	Size	data_length;
 	int		i;
 	int		natts;
-	int2	var_att_count;
-	int4	rel_pages;						/* diskpages of heap relation */
+	int16	var_att_count;
+	int32	rel_pages;						/* diskpages of heap relation */
 	float4	rel_tuples;						/* tupes in the heap relation */
 	double	idx_pages;					   /* diskpages in index relation */
 
@@ -2368,7 +2563,7 @@ estimate_index_pages(Oid rel_oid, Oid ind_oid )
 	Relation			index_rel;
 	Form_pg_attribute	*atts;
 
-	base_rel	= heap_open( rel_oid, AccessShareLock );
+	base_rel	= relation_open( rel_oid, AccessShareLock );
 	index_rel	= index_open( ind_oid, AccessShareLock );
 
 	rel_pages = base_rel->rd_rel->relpages;
@@ -2394,21 +2589,22 @@ estimate_index_pages(Oid rel_oid, Oid ind_oid )
 	data_length = 0;
 	for( i = 0; i < natts; ++i)
 	{
+		Form_pg_attribute attr = TupleDescAttr(ind_tup_desc, i);
+
 		/* the following is based on att_addlength() macro */
-		if( atts[i]->attlen > 0 )
+		if( attr->attlen > 0 )
 		{
 			/* No need to do +=; RHS is incrementing data_length by including it in the sum */
-			data_length = att_align_nominal(data_length, atts[i]->attalign);
-
-			data_length += atts[i]->attlen;
+			data_length = att_align_nominal(data_length, attr->attalign);
+			data_length += attr->attlen;
 		}
-		else if( atts[i]->attlen == -1 )
+		else if( attr->attlen == -1 )
 		{
-			data_length += atts[i]->atttypmod + VARHDRSZ;
+			data_length += attr->atttypmod + VARHDRSZ;
 		}
 		else
 		{	/* null terminated data */
-			Assert( atts[i]->attlen == -2 );
+			Assert( attr->attlen == -2 );
 			++var_att_count;
 		}
 	}
@@ -2444,8 +2640,8 @@ estimate_index_pages(Oid rel_oid, Oid ind_oid )
 
 	idx_pages = ceil( idx_pages );
 
-	heap_close( base_rel, AccessShareLock );
+	relation_close( base_rel, AccessShareLock );
 	index_close( index_rel, AccessShareLock );
 
-	return (int4)idx_pages;
+	return (int32)idx_pages;
 }
