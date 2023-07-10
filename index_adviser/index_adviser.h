@@ -21,7 +21,7 @@ typedef struct {
 
 	Index		varno;					/* index into the rangetable */
 	Index		varlevelsup;			/* points to the correct rangetable */
-	int2		ncols;					/* number of indexed columns */
+	int16		ncols;					/* number of indexed columns */
 	Oid			vartype[INDEX_MAX_KEYS];/* type of the column(s) */
 	AttrNumber	varattno[INDEX_MAX_KEYS];/* attribute number of the column(s) */
 	Oid			reloid;					/* the table oid */
@@ -37,5 +37,14 @@ extern void _PG_init(void);
 extern void _PG_fini(void);
 
 #define compile_assert(x)	extern int	_compile_assert_array[(x)?1:-1]
+
+#if PG_VERSION_NUM < 120000
+#define table_open(r, l)	heap_open(r, l)
+#define table_close(r, l)	heap_close(r, l)
+#endif
+
+#ifndef BTREE_AM_OID
+#define BTREE_AM_OID 403
+#endif
 
 #endif   /* INDEX_ADVISER_H */
